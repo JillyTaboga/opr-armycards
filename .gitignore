@@ -46,3 +46,9 @@ app.*.map.json
 
 # FVM Version Cache
 .fvm/
+
+# Firebase CLI cache and agent skills
+.firebase/
+.firebaserc
+.agents/
+skills-lock.json
