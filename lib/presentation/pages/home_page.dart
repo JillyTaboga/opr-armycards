@@ -25,11 +25,15 @@ class MyHomePage extends StatefulWidget {
 }
 
 class _MyHomePageState extends State<MyHomePage> {
-  final TextEditingController _idController = TextEditingController(text: 'o7SWLk3iXtSY');
+  final TextEditingController _idController = TextEditingController(
+    text: 'o7SWLk3iXtSY',
+  );
   final _formKey = GlobalKey<FormState>();
   final _apiService = ArmyApiService();
-  
+
   bool _isLoading = false;
+  bool _isProcessing = false;
+  String _processingMessage = '';
   String? _responseJson;
   String? _errorMessage;
 
@@ -61,16 +65,69 @@ class _MyHomePageState extends State<MyHomePage> {
 
   Future<Uint8List?> _capturePng(GlobalKey key) async {
     try {
-      RenderRepaintBoundary? boundary = key.currentContext?.findRenderObject() as RenderRepaintBoundary?;
-      if (boundary == null) return null;
-      if (boundary.debugNeedsPaint) {
-        await Future.delayed(const Duration(milliseconds: 50));
+      debugPrint("[CapturePNG] Step 1: Getting context");
+      final context = key.currentContext;
+      if (context == null) {
+        debugPrint("[CapturePNG] Context is null");
+        return null;
       }
-      ui.Image image = await boundary.toImage(pixelRatio: 3.0);
-      ByteData? byteData = await image.toByteData(format: ui.ImageByteFormat.png);
-      return byteData?.buffer.asUint8List();
+
+      debugPrint("[CapturePNG] Step 2: Getting renderObject");
+      final renderObject = context.findRenderObject();
+      if (renderObject is! RenderRepaintBoundary) {
+        debugPrint("[CapturePNG] renderObject is not RenderRepaintBoundary");
+        return null;
+      }
+
+      debugPrint("[CapturePNG] Step 3: Check debugNeedsPaint");
+      final boundary = renderObject;
+      bool needsPaint = false;
+      assert(() {
+        needsPaint = boundary.debugNeedsPaint;
+        return true;
+      }());
+      if (needsPaint) {
+        debugPrint("[CapturePNG] Awaiting paint frame");
+        await Future.delayed(const Duration(milliseconds: 100));
+      }
+
+      debugPrint("[CapturePNG] Step 4: Check mounted");
+      if (!context.mounted) {
+        debugPrint("[CapturePNG] Context is not mounted");
+        return null;
+      }
+
+      debugPrint("[CapturePNG] Step 5: Calling toImage");
+      ui.Image? image;
+      try {
+        image = await boundary.toImage(pixelRatio: 3.0);
+        debugPrint("[CapturePNG] toImage returned: $image");
+      } catch (e) {
+        debugPrint("[CapturePNG] Error in toImage: $e");
+        return null;
+      }
+
+      debugPrint("[CapturePNG] Step 6: Calling toByteData");
+      ByteData? byteData;
+      try {
+        byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+        debugPrint("[CapturePNG] toByteData returned: $byteData");
+      } catch (e) {
+        debugPrint("[CapturePNG] Error in toByteData: $e");
+        return null;
+      }
+
+      if (byteData == null) {
+        debugPrint("[CapturePNG] ByteData is null");
+        return null;
+      }
+
+      debugPrint("[CapturePNG] Step 7: Converting to Uint8List");
+      final bytes = byteData.buffer.asUint8List();
+      debugPrint("[CapturePNG] Success! Bytes length: ${bytes.length}");
+      return bytes;
     } catch (e) {
-      debugPrint("Erro capturando PNG: $e");
+      debugPrint("[CapturePNG] General Error: $e");
       return null;
     }
   }
@@ -78,7 +135,10 @@ class _MyHomePageState extends State<MyHomePage> {
   Future<void> _exportSingleCard(int index, String name) async {
     if (index >= _cardKeys.length) return;
     final scaffoldMessenger = ScaffoldMessenger.of(context);
-    setState(() => _isLoading = true);
+    setState(() {
+      _isProcessing = true;
+      _processingMessage = 'Exportando carta "$name"...';
+    });
     try {
       final bytes = await _capturePng(_cardKeys[index]);
       if (bytes != null) {
@@ -100,7 +160,7 @@ class _MyHomePageState extends State<MyHomePage> {
         ),
       );
     } finally {
-      setState(() => _isLoading = false);
+      setState(() => _isProcessing = false);
     }
   }
 
@@ -109,11 +169,18 @@ class _MyHomePageState extends State<MyHomePage> {
     if (units.isEmpty || _cardKeys.length != units.length) return;
     final scaffoldMessenger = ScaffoldMessenger.of(context);
 
-    setState(() => _isLoading = true);
+    setState(() {
+      _isProcessing = true;
+      _processingMessage = 'Exportando todas as cartas...';
+    });
     try {
       for (int i = 0; i < units.length; i++) {
         final unit = units[i];
         final String name = unit['name'] ?? 'Unidade';
+        setState(() {
+          _processingMessage =
+              'Exportando carta ${i + 1} de ${units.length} ("$name")...';
+        });
         final bytes = await _capturePng(_cardKeys[i]);
         if (bytes != null) {
           await saveFile(bytes, '${name.replaceAll(' ', '_')}.png');
@@ -133,20 +200,28 @@ class _MyHomePageState extends State<MyHomePage> {
         ),
       );
     } finally {
-      setState(() => _isLoading = false);
+      setState(() => _isProcessing = false);
     }
   }
-
 
   Future<void> _handlePrintSetupConfirmed(double paperWidth) async {
     final List units = _armyData?['units'] ?? [];
     if (units.isEmpty || _cardKeys.length != units.length) return;
     final scaffoldMessenger = ScaffoldMessenger.of(context);
 
-    setState(() => _isLoading = true);
+    setState(() {
+      _isProcessing = true;
+      _processingMessage = 'Preparando impressão (capturando cartas)...';
+    });
     try {
       final List<Uint8List> images = [];
       for (int i = 0; i < units.length; i++) {
+        final unit = units[i];
+        final String name = unit['name'] ?? 'Unidade';
+        setState(() {
+          _processingMessage =
+              'Capturando carta ${i + 1} de ${units.length} ("$name")...';
+        });
         final bytes = await _capturePng(_cardKeys[i]);
         if (bytes != null) {
           images.add(bytes);
@@ -157,6 +232,9 @@ class _MyHomePageState extends State<MyHomePage> {
         if (paperWidth - 48 < _cardWidth) {
           cardWidth = paperWidth - 48;
         }
+        setState(() {
+          _processingMessage = 'Gerando página de impressão...';
+        });
         await printImages(images, paperWidth, cardWidth, _cardHeight);
       }
     } catch (e) {
@@ -167,7 +245,7 @@ class _MyHomePageState extends State<MyHomePage> {
         ),
       );
     } finally {
-      setState(() => _isLoading = false);
+      setState(() => _isProcessing = false);
     }
   }
 
@@ -184,7 +262,9 @@ class _MyHomePageState extends State<MyHomePage> {
           builder: (context, setDialogState) {
             return AlertDialog(
               backgroundColor: theme.cardBg,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
               title: Row(
                 children: [
                   Icon(Icons.print_rounded, color: theme.accent),
@@ -192,8 +272,8 @@ class _MyHomePageState extends State<MyHomePage> {
                   Text(
                     'Configurar Impressão',
                     style: TextStyle(
-                      color: theme.accent, 
-                      fontSize: 18, 
+                      color: theme.accent,
+                      fontSize: 18,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
@@ -207,36 +287,57 @@ class _MyHomePageState extends State<MyHomePage> {
                     const Text(
                       'ESCOLHA O TAMANHO DO PAPEL',
                       style: TextStyle(
-                        fontSize: 10, 
-                        fontWeight: FontWeight.bold, 
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
                         color: Colors.white38,
                         letterSpacing: 0.5,
                       ),
                     ),
                     const SizedBox(height: 12),
                     RadioListTile<String>(
-                      title: const Text('A4 (210mm)', style: TextStyle(color: Colors.white70)),
-                      subtitle: const Text('Retrato: 794px | Paisagem: 1123px', style: TextStyle(color: Colors.white38)),
+                      title: const Text(
+                        'A4 (210mm)',
+                        style: TextStyle(color: Colors.white70),
+                      ),
+                      subtitle: const Text(
+                        'Retrato: 794px | Paisagem: 1123px',
+                        style: TextStyle(color: Colors.white38),
+                      ),
                       value: 'a4',
                       groupValue: selectedPaper,
                       activeColor: theme.primary,
-                      onChanged: (val) => setDialogState(() => selectedPaper = val!),
+                      onChanged: (val) =>
+                          setDialogState(() => selectedPaper = val!),
                     ),
                     RadioListTile<String>(
-                      title: const Text('Carta / Letter (216mm)', style: TextStyle(color: Colors.white70)),
-                      subtitle: const Text('Retrato: 816px | Paisagem: 1056px', style: TextStyle(color: Colors.white38)),
+                      title: const Text(
+                        'Carta / Letter (216mm)',
+                        style: TextStyle(color: Colors.white70),
+                      ),
+                      subtitle: const Text(
+                        'Retrato: 816px | Paisagem: 1056px',
+                        style: TextStyle(color: Colors.white38),
+                      ),
                       value: 'letter',
                       groupValue: selectedPaper,
                       activeColor: theme.primary,
-                      onChanged: (val) => setDialogState(() => selectedPaper = val!),
+                      onChanged: (val) =>
+                          setDialogState(() => selectedPaper = val!),
                     ),
                     RadioListTile<String>(
-                      title: const Text('Personalizado', style: TextStyle(color: Colors.white70)),
-                      subtitle: const Text('Defina as dimensões da folha', style: TextStyle(color: Colors.white38)),
+                      title: const Text(
+                        'Personalizado',
+                        style: TextStyle(color: Colors.white70),
+                      ),
+                      subtitle: const Text(
+                        'Defina as dimensões da folha',
+                        style: TextStyle(color: Colors.white38),
+                      ),
                       value: 'custom',
                       groupValue: selectedPaper,
                       activeColor: theme.primary,
-                      onChanged: (val) => setDialogState(() => selectedPaper = val!),
+                      onChanged: (val) =>
+                          setDialogState(() => selectedPaper = val!),
                     ),
                     if (selectedPaper == 'custom') ...[
                       const SizedBox(height: 12),
@@ -252,11 +353,16 @@ class _MyHomePageState extends State<MyHomePage> {
                                 labelStyle: TextStyle(color: theme.primary),
                                 enabledBorder: OutlineInputBorder(
                                   borderRadius: BorderRadius.circular(12),
-                                  borderSide: const BorderSide(color: Colors.white24),
+                                  borderSide: const BorderSide(
+                                    color: Colors.white24,
+                                  ),
                                 ),
                                 focusedBorder: OutlineInputBorder(
                                   borderRadius: BorderRadius.circular(12),
-                                  borderSide: BorderSide(color: theme.primary, width: 2),
+                                  borderSide: BorderSide(
+                                    color: theme.primary,
+                                    width: 2,
+                                  ),
                                 ),
                                 filled: true,
                                 fillColor: const Color(0xFF0F172A),
@@ -274,11 +380,16 @@ class _MyHomePageState extends State<MyHomePage> {
                                 labelStyle: TextStyle(color: theme.primary),
                                 enabledBorder: OutlineInputBorder(
                                   borderRadius: BorderRadius.circular(12),
-                                  borderSide: const BorderSide(color: Colors.white24),
+                                  borderSide: const BorderSide(
+                                    color: Colors.white24,
+                                  ),
                                 ),
                                 focusedBorder: OutlineInputBorder(
                                   borderRadius: BorderRadius.circular(12),
-                                  borderSide: BorderSide(color: theme.primary, width: 2),
+                                  borderSide: BorderSide(
+                                    color: theme.primary,
+                                    width: 2,
+                                  ),
                                 ),
                                 filled: true,
                                 fillColor: const Color(0xFF0F172A),
@@ -292,8 +403,8 @@ class _MyHomePageState extends State<MyHomePage> {
                     const Text(
                       'ORIENTAÇÃO',
                       style: TextStyle(
-                        fontSize: 10, 
-                        fontWeight: FontWeight.bold, 
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
                         color: Colors.white38,
                         letterSpacing: 0.5,
                       ),
@@ -306,9 +417,19 @@ class _MyHomePageState extends State<MyHomePage> {
                             label: const Row(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
-                                Icon(Icons.crop_portrait_rounded, size: 16, color: Colors.white),
+                                Icon(
+                                  Icons.crop_portrait_rounded,
+                                  size: 16,
+                                  color: Colors.white,
+                                ),
                                 SizedBox(width: 6),
-                                Text('Retrato', style: TextStyle(color: Colors.white, fontSize: 12)),
+                                Text(
+                                  'Retrato',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                  ),
+                                ),
                               ],
                             ),
                             selected: !isLandscape,
@@ -329,9 +450,19 @@ class _MyHomePageState extends State<MyHomePage> {
                             label: const Row(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
-                                Icon(Icons.crop_landscape_rounded, size: 16, color: Colors.white),
+                                Icon(
+                                  Icons.crop_landscape_rounded,
+                                  size: 16,
+                                  color: Colors.white,
+                                ),
                                 SizedBox(width: 6),
-                                Text('Paisagem', style: TextStyle(color: Colors.white, fontSize: 12)),
+                                Text(
+                                  'Paisagem',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                  ),
+                                ),
                               ],
                             ),
                             selected: isLandscape,
@@ -354,13 +485,18 @@ class _MyHomePageState extends State<MyHomePage> {
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(context),
-                  child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+                  child: const Text(
+                    'Cancelar',
+                    style: TextStyle(color: Colors.white54),
+                  ),
                 ),
                 ElevatedButton(
                   style: ElevatedButton.styleFrom(
                     backgroundColor: theme.primary,
                     foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
                   ),
                   onPressed: () {
                     double width = 794.0;
@@ -369,8 +505,10 @@ class _MyHomePageState extends State<MyHomePage> {
                     } else if (selectedPaper == 'letter') {
                       width = isLandscape ? 1056.0 : 816.0;
                     } else if (selectedPaper == 'custom') {
-                      double w = double.tryParse(customWidthController.text) ?? 800.0;
-                      double h = double.tryParse(customHeightController.text) ?? 600.0;
+                      double w =
+                          double.tryParse(customWidthController.text) ?? 800.0;
+                      double h =
+                          double.tryParse(customHeightController.text) ?? 600.0;
                       if (w < 100) w = 100;
                       if (w > 3000) w = 3000;
                       if (h < 100) h = 100;
@@ -378,11 +516,11 @@ class _MyHomePageState extends State<MyHomePage> {
                       width = isLandscape ? (w > h ? w : h) : (w < h ? w : h);
                     }
                     Navigator.pop(context);
-                    
+
                     setState(() {
                       _isLandscape = isLandscape;
                     });
-                    
+
                     _handlePrintSetupConfirmed(width);
                   },
                   child: const Text('Confirmar'),
@@ -461,15 +599,13 @@ class _MyHomePageState extends State<MyHomePage> {
                     color: Colors.black12,
                     blurRadius: 10,
                     offset: Offset(0, 4),
-                  )
+                  ),
                 ],
               ),
               child: const Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  CircularProgressIndicator(
-                    color: Color(0xFF6366F1),
-                  ),
+                  CircularProgressIndicator(color: Color(0xFF6366F1)),
                   SizedBox(height: 16),
                   Text(
                     'Carregando dados da API...',
@@ -500,7 +636,11 @@ class _MyHomePageState extends State<MyHomePage> {
             children: [
               const Row(
                 children: [
-                  Icon(Icons.error_outline_rounded, color: Color(0xFFFCA5A5), size: 28),
+                  Icon(
+                    Icons.error_outline_rounded,
+                    color: Color(0xFFFCA5A5),
+                    size: 28,
+                  ),
                   SizedBox(width: 10),
                   Text(
                     'Ocorreu um erro',
@@ -539,7 +679,10 @@ class _MyHomePageState extends State<MyHomePage> {
     }
 
     if (_armyData != null) {
-      final theme = GameSystemTheme.getTheme(_armyData!['gameSystem'], _selectedPalette);
+      final theme = GameSystemTheme.getTheme(
+        _armyData!['gameSystem'],
+        _selectedPalette,
+      );
 
       return SingleChildScrollView(
         child: Column(
@@ -569,7 +712,8 @@ class _MyHomePageState extends State<MyHomePage> {
                       height: 24,
                       child: Switch(
                         value: _showFullRules,
-                        onChanged: (val) => setState(() => _showFullRules = val),
+                        onChanged: (val) =>
+                            setState(() => _showFullRules = val),
                         activeThumbColor: theme.accent,
                         activeTrackColor: theme.accent.withValues(alpha: 0.3),
                       ),
@@ -590,13 +734,20 @@ class _MyHomePageState extends State<MyHomePage> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 10.0),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16.0,
+                        vertical: 10.0,
+                      ),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Row(
                             children: [
-                              Icon(Icons.data_object, color: theme.primary, size: 20),
+                              Icon(
+                                Icons.data_object,
+                                color: theme.primary,
+                                size: 20,
+                              ),
                               const SizedBox(width: 8),
                               const Text(
                                 'Retorno JSON Formatado',
@@ -609,7 +760,11 @@ class _MyHomePageState extends State<MyHomePage> {
                           ),
                           TextButton.icon(
                             onPressed: _copyToClipboard,
-                            icon: Icon(Icons.copy_rounded, size: 16, color: theme.primary),
+                            icon: Icon(
+                              Icons.copy_rounded,
+                              size: 16,
+                              color: theme.primary,
+                            ),
                             label: Text(
                               'Copiar',
                               style: TextStyle(color: theme.primary),
@@ -700,9 +855,13 @@ class _MyHomePageState extends State<MyHomePage> {
               child: Container(
                 padding: const EdgeInsets.symmetric(vertical: 10),
                 decoration: BoxDecoration(
-                  color: !_showJson ? theme.primary.withValues(alpha: 0.15) : Colors.transparent,
+                  color: !_showJson
+                      ? theme.primary.withValues(alpha: 0.15)
+                      : Colors.transparent,
                   borderRadius: BorderRadius.circular(8),
-                  border: !_showJson ? Border.all(color: theme.primary.withValues(alpha: 0.5)) : null,
+                  border: !_showJson
+                      ? Border.all(color: theme.primary.withValues(alpha: 0.5))
+                      : null,
                 ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -735,9 +894,13 @@ class _MyHomePageState extends State<MyHomePage> {
               child: Container(
                 padding: const EdgeInsets.symmetric(vertical: 10),
                 decoration: BoxDecoration(
-                  color: _showJson ? theme.primary.withValues(alpha: 0.15) : Colors.transparent,
+                  color: _showJson
+                      ? theme.primary.withValues(alpha: 0.15)
+                      : Colors.transparent,
                   borderRadius: BorderRadius.circular(8),
-                  border: _showJson ? Border.all(color: theme.primary.withValues(alpha: 0.5)) : null,
+                  border: _showJson
+                      ? Border.all(color: theme.primary.withValues(alpha: 0.5))
+                      : null,
                 ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -779,7 +942,10 @@ class _MyHomePageState extends State<MyHomePage> {
       color: theme.cardBg,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: theme.primary.withValues(alpha: 0.3), width: 1.5),
+        side: BorderSide(
+          color: theme.primary.withValues(alpha: 0.3),
+          width: 1.5,
+        ),
       ),
       child: Padding(
         padding: const EdgeInsets.all(16.0),
@@ -824,9 +990,17 @@ class _MyHomePageState extends State<MyHomePage> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
-                _buildHeaderStat('PONTOS', '$listPoints / $pointsLimit', theme.accent),
+                _buildHeaderStat(
+                  'PONTOS',
+                  '$listPoints / $pointsLimit',
+                  theme.accent,
+                ),
                 _buildHeaderStat('MODELOS', '$modelCount', theme.primary),
-                _buildHeaderStat('ATIVAÇÕES', '$activationCount', theme.primary),
+                _buildHeaderStat(
+                  'ATIVAÇÕES',
+                  '$activationCount',
+                  theme.primary,
+                ),
               ],
             ),
           ],
@@ -924,7 +1098,10 @@ class _MyHomePageState extends State<MyHomePage> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = GameSystemTheme.getTheme(_armyData?['gameSystem'], _selectedPalette);
+    final theme = GameSystemTheme.getTheme(
+      _armyData?['gameSystem'],
+      _selectedPalette,
+    );
 
     return Scaffold(
       backgroundColor: theme.background,
@@ -956,15 +1133,16 @@ class _MyHomePageState extends State<MyHomePage> {
               initialCustomBgFile: _customBgFile,
               initialCardWidth: _cardWidth,
               initialCardHeight: _cardHeight,
-              onConfigChanged: (bgType, bgOpacity, customBgFile, cardWidth, cardHeight) {
-                setState(() {
-                  _bgType = bgType;
-                  _bgOpacity = bgOpacity;
-                  _customBgFile = customBgFile;
-                  _cardWidth = cardWidth;
-                  _cardHeight = cardHeight;
-                });
-              },
+              onConfigChanged:
+                  (bgType, bgOpacity, customBgFile, cardWidth, cardHeight) {
+                    setState(() {
+                      _bgType = bgType;
+                      _bgOpacity = bgOpacity;
+                      _customBgFile = customBgFile;
+                      _cardWidth = cardWidth;
+                      _cardHeight = cardHeight;
+                    });
+                  },
             ),
           ),
           PaletteSelector(
@@ -977,7 +1155,10 @@ class _MyHomePageState extends State<MyHomePage> {
           ),
           if (_armyData != null) ...[
             IconButton(
-              icon: const Icon(Icons.download_for_offline_rounded, color: Colors.white),
+              icon: const Icon(
+                Icons.download_for_offline_rounded,
+                color: Colors.white,
+              ),
               tooltip: 'Exportar todas as cartas em PNG',
               onPressed: _exportAllCards,
             ),
@@ -990,113 +1171,167 @@ class _MyHomePageState extends State<MyHomePage> {
           const SizedBox(width: 8),
         ],
       ),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Main search card
-              Card(
-                elevation: 4,
-                color: theme.cardBg,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                  side: BorderSide(color: theme.primary.withValues(alpha: 0.15)),
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.all(20.0),
-                  child: Form(
-                    key: _formKey,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        const Text(
-                          'Buscar Exército',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white70,
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        const Text(
-                          'Insira o Army ID para obter o retorno estruturado e as fichas temáticas.',
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: Colors.white38,
-                          ),
-                        ),
-                        const SizedBox(height: 20),
-                        TextFormField(
-                          controller: _idController,
-                          decoration: InputDecoration(
-                            labelText: 'Army ID',
-                            hintText: 'Digite o ID do exército (ex: n3t4xQ...)',
-                            prefixIcon: Icon(Icons.fingerprint, color: theme.primary),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                              borderSide: BorderSide(color: theme.primary.withValues(alpha: 0.3)),
+      body: Stack(
+        children: [
+          SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // Main search card
+                  Card(
+                    elevation: 4,
+                    color: theme.cardBg,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      side: BorderSide(
+                        color: theme.primary.withValues(alpha: 0.15),
+                      ),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(20.0),
+                      child: Form(
+                        key: _formKey,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            const Text(
+                              'Buscar Exército',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white70,
+                              ),
                             ),
-                            enabledBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                              borderSide: BorderSide(color: theme.primary.withValues(alpha: 0.2)),
+                            const SizedBox(height: 6),
+                            const Text(
+                              'Insira o Army ID para obter o retorno estruturado e as fichas temáticas.',
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: Colors.white38,
+                              ),
                             ),
-                            focusedBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                              borderSide: BorderSide(color: theme.primary, width: 2),
-                            ),
-                            filled: true,
-                            fillColor: const Color(0xFF0F172A),
-                          ),
-                          validator: (value) {
-                            if (value == null || value.trim().isEmpty) {
-                              return 'Por favor, insira o Army ID';
-                            }
-                            return null;
-                          },
-                        ),
-                        const SizedBox(height: 16),
-                        ElevatedButton.icon(
-                          onPressed: _isLoading ? null : _fetchArmyData,
-                          icon: _isLoading
-                              ? const SizedBox(
-                                  width: 20,
-                                  height: 20,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2.5,
-                                    color: Colors.white,
+                            const SizedBox(height: 20),
+                            TextFormField(
+                              controller: _idController,
+                              decoration: InputDecoration(
+                                labelText: 'Army ID',
+                                hintText:
+                                    'Digite o ID do exército (ex: n3t4xQ...)',
+                                prefixIcon: Icon(
+                                  Icons.fingerprint,
+                                  color: theme.primary,
+                                ),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                  borderSide: BorderSide(
+                                    color: theme.primary.withValues(alpha: 0.3),
                                   ),
-                                )
-                              : const Icon(Icons.send_rounded),
-                          label: Text(
-                            _isLoading ? 'Buscando...' : 'Enviar Requisição',
-                            style: const TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: theme.primary,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(vertical: 16),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
+                                ),
+                                enabledBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                  borderSide: BorderSide(
+                                    color: theme.primary.withValues(alpha: 0.2),
+                                  ),
+                                ),
+                                focusedBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                  borderSide: BorderSide(
+                                    color: theme.primary,
+                                    width: 2,
+                                  ),
+                                ),
+                                filled: true,
+                                fillColor: const Color(0xFF0F172A),
+                              ),
+                              validator: (value) {
+                                if (value == null || value.trim().isEmpty) {
+                                  return 'Por favor, insira o Army ID';
+                                }
+                                return null;
+                              },
                             ),
-                            elevation: 2,
-                          ),
+                            const SizedBox(height: 16),
+                            ElevatedButton.icon(
+                              onPressed: _isLoading ? null : _fetchArmyData,
+                              icon: _isLoading
+                                  ? const SizedBox(
+                                      width: 20,
+                                      height: 20,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2.5,
+                                        color: Colors.white,
+                                      ),
+                                    )
+                                  : const Icon(Icons.send_rounded),
+                              label: Text(
+                                _isLoading
+                                    ? 'Buscando...'
+                                    : 'Enviar Requisição',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: theme.primary,
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 16,
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                elevation: 2,
+                              ),
+                            ),
+                          ],
                         ),
-                      ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Result Section
+                  Expanded(child: _buildResultWidget()),
+                ],
+              ),
+            ),
+          ),
+          if (_isProcessing)
+            Positioned.fill(
+              child: Container(
+                color: Colors.black.withValues(alpha: 0.5),
+                child: Center(
+                  child: Card(
+                    color: const Color(0xFF1E293B),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(24.0),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const CircularProgressIndicator(
+                            color: Color(0xFF6366F1),
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            _processingMessage,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w500,
+                              color: Colors.white70,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
               ),
-              const SizedBox(height: 16),
-
-              // Result Section
-              Expanded(
-                child: _buildResultWidget(),
-              ),
-            ],
-          ),
-        ),
+            ),
+        ],
       ),
     );
   }

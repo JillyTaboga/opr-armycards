@@ -1,6 +1,8 @@
+// ignore_for_file: avoid_web_libraries_in_flutter
+
 import 'dart:convert';
-import 'dart:html' as html;
 import 'dart:typed_data';
+import 'package:web/web.dart' as web;
 
 Future<void> printImages(
   List<Uint8List> imagesBytes,
@@ -8,76 +10,82 @@ Future<void> printImages(
   double cardWidth,
   double cardHeight,
 ) async {
-  final htmlContent = StringBuffer();
-  htmlContent.write('''
-<!DOCTYPE html>
-<html>
-<head>
-  <title>Imprimir Cartas - OPR Army Cards</title>
-  <style>
-    body {
-      margin: 0;
-      padding: 20px;
-      background-color: #f1f5f9;
-      display: flex;
-      justify-content: center;
-    }
-    .sheet {
-      width: ${paperWidth}px;
-      display: flex;
-      flex-wrap: wrap;
-      gap: 16px;
-      justify-content: center;
-      background-color: white;
-      padding: 24px;
-      box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
-      border-radius: 8px;
-    }
-    .card-img {
-      width: ${cardWidth}px;
-      height: ${cardHeight}px;
-      border-radius: 16px;
-      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-    }
+  final styleElement =
+      web.document.createElement('style') as web.HTMLStyleElement;
+  styleElement.textContent =
+      '''
     @media print {
-      body {
-        background-color: white;
-        padding: 0;
+      body > *:not(#print-container) {
+        display: none !important;
       }
-      .sheet {
-        box-shadow: none;
-        padding: 0;
+      html, body {
+        background: white !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        width: 100% !important;
+        height: auto !important;
       }
-      .card-img {
-        box-shadow: none;
-        page-break-inside: avoid;
+      #print-container {
+        display: block !important;
+        width: ${paperWidth}px !important;
+        margin: 0 auto !important;
+        padding: 0 !important;
+        background: white !important;
+      }
+      .print-sheet {
+        display: flex !important;
+        flex-wrap: wrap !important;
+        gap: 16px !important;
+        justify-content: center !important;
+        background: white !important;
+        padding: 24px !important;
+      }
+      .print-card-img {
+        width: ${cardWidth}px !important;
+        height: ${cardHeight}px !important;
+        border-radius: 16px !important;
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+        display: block !important;
       }
     }
-  </style>
-</head>
-<body>
-  <div class="sheet">
-''');
+    @media screen {
+      #print-container {
+        display: none !important;
+      }
+    }
+  ''';
+  web.document.head?.appendChild(styleElement);
+
+  final printContainer =
+      web.document.createElement('div') as web.HTMLDivElement;
+  printContainer.id = 'print-container';
+
+  final printSheet = web.document.createElement('div') as web.HTMLDivElement;
+  printSheet.className = 'print-sheet';
+  printContainer.appendChild(printSheet);
 
   for (final bytes in imagesBytes) {
     final base64String = base64Encode(bytes);
-    htmlContent.write('    <img class="card-img" src="data:image/png;base64,$base64String" />\n');
+    final img = web.document.createElement('img') as web.HTMLImageElement;
+    img.className = 'print-card-img';
+    img.src = 'data:image/png;base64,$base64String';
+    printSheet.appendChild(img);
   }
 
-  htmlContent.write('''
-  </div>
-  <script>
-    window.onload = function() {
-      setTimeout(function() {
-        window.print();
-      }, 300);
-    }
-  </script>
-</body>
-</html>
-''');
+  web.document.body?.appendChild(printContainer);
 
-  final blob = html.Blob([htmlContent.toString()], 'text/html');
-  final url = html.Url.createObjectUrlFromBlob(blob);
-  html.window.open(url, '_blank');
+  // Wait for the images to load/render in the DOM before printing
+  await Future.delayed(const Duration(milliseconds: 300));
+
+  try {
+    web.window.focus();
+    web.window.print();
+  } catch (e) {
+    // Print dialog failed
+  }
+
+  // Clean up DOM after printing dialog is closed/resumed
+  printContainer.remove();
+  styleElement.remove();
 }
